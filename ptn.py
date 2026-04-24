@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         const="__FIRST__",
         metavar="TRACKER",
-        help="Send one test notification. Optionally target a specific tracker module name, e.g. --test-notification MTV",
+        help="Send one test notification. Optionally target a specific tracker module name, e.g. --test-notification Anthelion",
     )
     return parser.parse_args()
 
@@ -34,6 +34,14 @@ def iter_tracker_instances(tracker_classes: dict[str, Any]) -> list[tuple[str, A
     instances: list[tuple[str, Any]] = []
 
     for tracker_name, tracker_class in tracker_classes.items():
+        if getattr(tracker_class, "api_only", False):
+            if not api_tokens.get(tracker_name):
+                continue
+
+            tracker_instance = tracker_class(Path("./cookies") / f"{tracker_name}.txt")
+            instances.append((tracker_name, tracker_instance))
+            continue
+
         search_patterns = [
             cookies_dir / tracker_name.upper() / "*.txt",
             cookies_dir / tracker_name / "*.txt",

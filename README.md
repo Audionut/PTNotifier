@@ -231,7 +231,7 @@ The script will start, load all trackers with valid cookie files, and begin moni
 To send a one-off test notification, use:
 
 ```bash
-python ptn.py --test-notification MTV
+python ptn.py --test-notification TRACKER
 ```
 
 If you omit the tracker name, PTNotifier will use the first available tracker instance:
@@ -240,7 +240,7 @@ If you omit the tracker name, PTNotifier will use the first available tracker in
 python ptn.py --test-notification
 ```
 
-For MTV, test mode will prefer an unread/open item when one exists. If none exists, it will fall back to one already-read inbox message so you can still verify your notification backend.
+You can target any supported tracker, including API-only trackers that are configured in `config.py`.
 
 ### Docker
 
