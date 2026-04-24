@@ -84,6 +84,138 @@ class MTV(BaseTracker):
         staff_items = await self._parse_staff_inbox(self.staff_url)
         return notifications + inbox_items + staff_items
 
+    async def _fetch_test_item(self) -> Optional[dict[str, Any]]:
+        await self._discover_notifications_url()
+
+        notification = await self._parse_first_notification()
+        if notification:
+            return notification
+
+        unread_inbox_item = await self._parse_first_inbox_item(self.inbox_url)
+        if unread_inbox_item:
+            return unread_inbox_item
+
+        open_staff_item = await self._parse_first_staff_item(self.staff_url)
+        if open_staff_item:
+            return open_staff_item
+
+        fallback_inbox_url = urljoin(self.base_url, "user/inbox/received")
+        fallback_inbox_item = await self._parse_first_inbox_item(fallback_inbox_url, ignore_processed=True)
+        if fallback_inbox_item:
+            return fallback_inbox_item
+
+        fallback_staff_item = await self._parse_first_staff_item(self.staff_url, ignore_processed=True)
+        if fallback_staff_item:
+            return fallback_staff_item
+
+        return None
+
+    async def _parse_first_notification(self) -> Optional[dict[str, Any]]:
+        notifications = await self._parse_notifications()
+        if notifications:
+            return notifications[0]
+        return None
+
+    async def _parse_first_inbox_item(self, url: str, ignore_processed: bool = False) -> Optional[dict[str, Any]]:
+        response = await self._fetch_page(url, "messages", success_text="messageform")
+        soup = BeautifulSoup(response, "html.parser")
+        if not soup:
+            return None
+
+        rows = self._find_inbox_rows(soup)
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) < 4:
+                continue
+
+            conv_id = self._extract_checkbox_value(row)
+            subject_link = cols[1].find("a", href=True)
+            if not subject_link:
+                continue
+
+            subject = subject_link.get_text(" ", strip=True)
+            thread_url = urljoin(self.base_url, str(subject_link["href"]))
+            sender = cols[2].get_text(" ", strip=True)
+            date_str = cols[3].get_text(" ", strip=True)
+
+            item = await self._fetch_first_conversation_message(
+                thread_url,
+                fallback_prefix="pm",
+                fallback_id=conv_id,
+                subject=subject,
+                sender=sender,
+                date_str=date_str,
+                is_staff=False,
+                ignore_processed=ignore_processed,
+            )
+            if item:
+                return item
+
+        return None
+
+    async def _parse_first_staff_item(self, url: str, ignore_processed: bool = False) -> Optional[dict[str, Any]]:
+        response = await self._fetch_page(url, "staff messages", success_text="Staff PMs")
+        soup = BeautifulSoup(response, "html.parser")
+        if not soup:
+            return None
+
+        rows = self._find_staff_open_rows(soup)
+        for row in rows:
+            cols = row.find_all("td")
+            if len(cols) < 4:
+                continue
+
+            subject_link = cols[0].find("a", href=True)
+            if not subject_link:
+                continue
+
+            thread_url = urljoin(self.base_url, str(subject_link["href"]))
+            conv_id = self._extract_numeric_id(thread_url)
+            subject = subject_link.get_text(" ", strip=True)
+            date_str = cols[1].get_text(" ", strip=True)
+            sender = cols[2].get_text(" ", strip=True) or "Staff"
+
+            item = await self._fetch_first_conversation_message(
+                thread_url,
+                fallback_prefix="staff",
+                fallback_id=conv_id,
+                subject=subject,
+                sender=sender,
+                date_str=date_str,
+                is_staff=True,
+                ignore_processed=ignore_processed,
+            )
+            if item:
+                return item
+
+        return None
+
+    async def _fetch_first_conversation_message(
+        self,
+        url: str,
+        fallback_prefix: str,
+        fallback_id: Optional[str],
+        subject: str,
+        sender: str,
+        date_str: str,
+        is_staff: bool,
+        ignore_processed: bool = False,
+    ) -> Optional[dict[str, Any]]:
+        messages = await self._fetch_conversation_messages(
+            url,
+            fallback_prefix,
+            fallback_id,
+            subject,
+            sender,
+            date_str,
+            is_staff,
+            ignore_processed=ignore_processed,
+            max_items=1,
+        )
+        if messages:
+            return messages[0]
+        return None
+
     async def _discover_notifications_url(self) -> None:
         if self.notifications_url:
             return
@@ -165,7 +297,7 @@ class MTV(BaseTracker):
 
         return new_items
 
-    async def _parse_inbox(self, url: str) -> list[dict[str, Any]]:
+    async def _parse_inbox(self, url: str, ignore_processed: bool = False) -> list[dict[str, Any]]:
         new_items: list[dict[str, Any]] = []
         response = await self._fetch_page(url, "messages", success_text="messageform")
         soup = BeautifulSoup(response, "html.parser")
@@ -196,12 +328,13 @@ class MTV(BaseTracker):
                 sender=sender,
                 date_str=date_str,
                 is_staff=False,
+                ignore_processed=ignore_processed,
             )
             new_items.extend(messages)
 
         return new_items
 
-    async def _parse_staff_inbox(self, url: str) -> list[dict[str, Any]]:
+    async def _parse_staff_inbox(self, url: str, ignore_processed: bool = False) -> list[dict[str, Any]]:
         new_items: list[dict[str, Any]] = []
         response = await self._fetch_page(url, "staff messages", success_text="Staff PMs")
         soup = BeautifulSoup(response, "html.parser")
@@ -232,6 +365,7 @@ class MTV(BaseTracker):
                 sender=sender,
                 date_str=date_str,
                 is_staff=True,
+                ignore_processed=ignore_processed,
             )
             new_items.extend(messages)
 
@@ -311,6 +445,8 @@ class MTV(BaseTracker):
         sender: str,
         date_str: str,
         is_staff: bool,
+        ignore_processed: bool = False,
+        max_items: Optional[int] = None,
     ) -> list[dict[str, Any]]:
         messages_found: list[dict[str, Any]] = []
         response = await self._fetch_page(url, "message body", success_text="Logout")
@@ -325,7 +461,7 @@ class MTV(BaseTracker):
                 continue
 
             item_id = f"{fallback_prefix}_{message_id}"
-            if item_id in self.state["processed_ids"] or item_id in seen_ids:
+            if (not ignore_processed and item_id in self.state["processed_ids"]) or item_id in seen_ids:
                 continue
 
             body_text = self._extract_message_body(container)
@@ -349,6 +485,9 @@ class MTV(BaseTracker):
             )
             seen_ids.add(item_id)
 
+            if max_items is not None and len(messages_found) >= max_items:
+                return messages_found
+
         if messages_found or not fallback_id:
             return messages_found
 
@@ -357,7 +496,7 @@ class MTV(BaseTracker):
             return messages_found
 
         item_id = f"{fallback_prefix}_{fallback_id}"
-        if item_id in self.state["processed_ids"]:
+        if not ignore_processed and item_id in self.state["processed_ids"]:
             return messages_found
 
         messages_found.append(

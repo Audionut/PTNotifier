@@ -228,6 +228,20 @@ python ptn.py
 
 The script will start, load all trackers with valid cookie files, and begin monitoring. The first run for each tracker will not send any notifications; it will only establish a baseline of existing items.
 
+To send a one-off test notification, use:
+
+```bash
+python ptn.py --test-notification MTV
+```
+
+If you omit the tracker name, PTNotifier will use the first available tracker instance:
+
+```bash
+python ptn.py --test-notification
+```
+
+For MTV, test mode will prefer an unread/open item when one exists. If none exists, it will fall back to one already-read inbox message so you can still verify your notification backend.
+
 ### Docker
 
 You can also run PTNotifier in a Docker container. Make sure to set up your `config.py` and cookies as described above, then use the following command:
